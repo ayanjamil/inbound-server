@@ -8,6 +8,9 @@ from dotenv import load_dotenv  # Load environment variables from .env
 # Load .env file
 load_dotenv()
 
+print("ELEVENLABS_API_KEY:", os.getenv("ELEVENLABS_API_KEY"))  
+print("ELEVENLABS_AGENT_ID:", os.getenv("ELEVENLABS_AGENT_ID"))
+
 app = Flask(__name__)
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode='gevent')
 
