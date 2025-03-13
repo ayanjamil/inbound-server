@@ -18,7 +18,7 @@ active_clients = set()
 # Create a global event loop for WebSocket
 ws_loop = asyncio.new_event_loop()
 
-@app.route("/exotel", methods=["GET", "POST"])
+@app.route("/", methods=["GET", "POST"])
 def exotel_webhook():
     """Handle Exotel webhook requests and forward data to WebSocket clients."""
     if request.method == "POST":
