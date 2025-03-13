@@ -95,15 +95,23 @@ async def handle_connection(websocket, path):
         active_clients.remove(websocket)
         print("[WEBSOCKETS] Client disconnected, remaining clients:", len(active_clients))
 
+# def run_websocket_server():
+#     """Start the WebSocket server on port 8765."""
+#     print("[SERVER] Starting WebSocket server on ws://0.0.0.0:8765")
+#     global ws_loop
+#     asyncio.set_event_loop(ws_loop)
+#     start_server = websockets.serve(handle_connection, "0.0.0.0", 8765)
+#     ws_loop.run_until_complete(start_server)
+#     print("[SERVER] WebSocket server is running")
+#     ws_loop.run_forever()
+async def start_ws_server():
+    server = await websockets.serve(handle_connection, "0.0.0.0", 8765)
+    await server.wait_closed()
+
 def run_websocket_server():
-    """Start the WebSocket server on port 8765."""
-    print("[SERVER] Starting WebSocket server on ws://0.0.0.0:8765")
-    global ws_loop
-    asyncio.set_event_loop(ws_loop)
-    start_server = websockets.serve(handle_connection, "0.0.0.0", 8765)
-    ws_loop.run_until_complete(start_server)
-    print("[SERVER] WebSocket server is running")
-    ws_loop.run_forever()
+    loop = asyncio.new_event_loop()  # Create a new event loop
+    asyncio.set_event_loop(loop)  # Set it as the current loop
+    loop.run_until_complete(start_ws_server())  # Run the WebSocket server
 
 if __name__ == "__main__":
     print("[SERVER] Starting Flask and WebSocket servers")
