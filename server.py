@@ -16,7 +16,7 @@ AGENT_ID = "PO1XewroLt5PdOgznW2p"
 # Store active WebSocket connections
 active_clients = set()
 
-@app.route("/exotel", methods=["POST"])
+@app.route("/exotel", methods=["GET", "POST"])
 def exotel_passthru():
     """Receive call input from Exotel and send it to WebSocket clients."""
     data = request.json  # Exotel should send JSON with audio URL/text
