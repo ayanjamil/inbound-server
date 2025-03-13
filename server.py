@@ -7,7 +7,7 @@ from flask import Flask, request, jsonify
 # Flask Configuration
 app = Flask(__name__)
 
-# ElevenLabs Configuration (Replace with your actual keys)
+# ElevenLabs Configuration (Replace with actual credentials)
 ELEVENLABS_WS_URL = "wss://api.elevenlabs.io/v1/conversational-ai/{agent_id}/websocket"
 API_KEY = "sk_a51aaf204357d751750aeec49cbf73bf7ecf700be744ecd0"
 AGENT_ID = "PO1XewroLt5PdOgznW2p"
@@ -33,7 +33,7 @@ def exotel_webhook():
         return jsonify({"error": "No data received"}), 400
 
     # Forward data to all WebSocket clients asynchronously
-    asyncio.run_coroutine_threadsafe(forward_to_websockets(data), loop)
+    asyncio.run_coroutine_threadsafe(forward_to_websockets(data), ws_loop)
 
     return jsonify({"status": "received"}), 200
 
@@ -74,9 +74,8 @@ async def handle_elevenlabs_connection(client_ws):
         async with websockets.connect(url, extra_headers=headers) as elevenlabs_ws:
             print("[ELEVENLABS] Connection established with ElevenLabs API")
             await asyncio.gather(
-                forward_to_websockets({"status": "connected", "message": "Connected to ElevenLabs."}),
-                forward_to_client(elevenlabs_ws, client_ws),
-                forward_to_websockets(client_ws)
+                forward_to_elevenlabs(client_ws, elevenlabs_ws),
+                forward_to_client(elevenlabs_ws, client_ws)
             )
     except websockets.exceptions.ConnectionClosed:
         print("[ELEVENLABS] Connection closed")
@@ -99,13 +98,12 @@ async def handle_connection(websocket, path):
 def run_websocket_server():
     """Start the WebSocket server on port 8765."""
     print("[SERVER] Starting WebSocket server on ws://0.0.0.0:8765")
-    global loop
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
+    global ws_loop
+    asyncio.set_event_loop(ws_loop)
     start_server = websockets.serve(handle_connection, "0.0.0.0", 8765)
-    loop.run_until_complete(start_server)
+    ws_loop.run_until_complete(start_server)
     print("[SERVER] WebSocket server is running")
-    loop.run_forever()
+    ws_loop.run_forever()
 
 if __name__ == "__main__":
     print("[SERVER] Starting Flask and WebSocket servers")
@@ -117,5 +115,3 @@ if __name__ == "__main__":
     # Start Flask server
     print("[FLASK] Running Flask server on http://0.0.0.0:5000")
     app.run(host="0.0.0.0", port=5000, threaded=True)  # Allow multi-threading
-
-
