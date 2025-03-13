@@ -1,14 +1,13 @@
 import asyncio
 import websockets
 import json
-import os
 import threading
 from flask import Flask, request, jsonify
 
-# Flask App for handling Exotel requests
+# Flask Configuration
 app = Flask(__name__)
 
-# ElevenLabs Configuration (Hardcoded for testing)
+# ElevenLabs Configuration (Replace with your actual keys)
 ELEVENLABS_WS_URL = "wss://api.elevenlabs.io/v1/conversational-ai/{agent_id}/websocket"
 API_KEY = "sk_a51aaf204357d751750aeec49cbf73bf7ecf700be744ecd0"
 AGENT_ID = "PO1XewroLt5PdOgznW2p"
@@ -16,21 +15,25 @@ AGENT_ID = "PO1XewroLt5PdOgznW2p"
 # Store active WebSocket connections
 active_clients = set()
 
+# Create a global event loop for WebSocket
+ws_loop = asyncio.new_event_loop()
+
 @app.route("/exotel", methods=["GET", "POST"])
-def exotel_passthru():
-    """Receive call input from Exotel and send it to WebSocket clients."""
-    data = request.json  # Exotel should send JSON with audio URL/text
-    print("[FLASK] Received Exotel request with data:", data)
-    
+def exotel_webhook():
+    """Handle Exotel webhook requests and forward data to WebSocket clients."""
+    if request.method == "POST":
+        data = request.get_json()  # Expecting JSON data in a POST request
+    else:
+        data = request.args.to_dict()  # Handle GET requests with query parameters
+
+    print("[FLASK] Received Exotel request:", data)
+
     if not data:
         print("[FLASK] Error: No data received from Exotel")
         return jsonify({"error": "No data received"}), 400
 
-    # Send data to WebSockets without blocking Flask
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    loop.run_until_complete(forward_to_websockets(data))
-    print("[FLASK] Data forwarded to WebSockets")
+    # Forward data to all WebSocket clients asynchronously
+    asyncio.run_coroutine_threadsafe(forward_to_websockets(data), loop)
 
     return jsonify({"status": "received"}), 200
 
@@ -44,19 +47,25 @@ async def forward_to_websockets(data):
 
 async def forward_to_elevenlabs(client_ws, elevenlabs_ws):
     """Forward messages from WebSocket client to ElevenLabs."""
-    async for message in client_ws:
-        print("[WEBSOCKETS] Forwarding client message to ElevenLabs:", message)
-        await elevenlabs_ws.send(message)
+    try:
+        async for message in client_ws:
+            print("[WEBSOCKETS] Forwarding client message to ElevenLabs:", message)
+            await elevenlabs_ws.send(message)
+    except websockets.exceptions.ConnectionClosed:
+        print("[WEBSOCKETS] Client WebSocket disconnected")
 
 async def forward_to_client(elevenlabs_ws, client_ws):
     """Forward responses from ElevenLabs back to WebSocket client."""
-    async for message in elevenlabs_ws:
-        data = json.loads(message)
-        print("[WEBSOCKETS] Received response from ElevenLabs, forwarding to client:", data)
-        await client_ws.send(json.dumps(data))
+    try:
+        async for message in elevenlabs_ws:
+            data = json.loads(message)
+            print("[WEBSOCKETS] Received response from ElevenLabs, forwarding to client:", data)
+            await client_ws.send(json.dumps(data))
+    except websockets.exceptions.ConnectionClosed:
+        print("[WEBSOCKETS] ElevenLabs WebSocket disconnected")
 
 async def handle_elevenlabs_connection(client_ws):
-    """Connect WebSocket client to ElevenLabs API."""
+    """Connect WebSocket client to ElevenLabs API and forward messages."""
     headers = {"xi-api-key": API_KEY}
     url = ELEVENLABS_WS_URL.format(agent_id=AGENT_ID)
     print("[ELEVENLABS] Connecting to ElevenLabs WebSocket API")
@@ -65,11 +74,14 @@ async def handle_elevenlabs_connection(client_ws):
         async with websockets.connect(url, extra_headers=headers) as elevenlabs_ws:
             print("[ELEVENLABS] Connection established with ElevenLabs API")
             await asyncio.gather(
-                forward_to_elevenlabs(client_ws, elevenlabs_ws),
-                forward_to_client(elevenlabs_ws, client_ws)
+                forward_to_websockets({"status": "connected", "message": "Connected to ElevenLabs."}),
+                forward_to_client(elevenlabs_ws, client_ws),
+                forward_to_websockets(client_ws)
             )
+    except websockets.exceptions.ConnectionClosed:
+        print("[ELEVENLABS] Connection closed")
     except Exception as e:
-        print("[ELEVENLABS] Connection error:", e)
+        print(f"[ELEVENLABS] Connection error: {e}")
 
 async def handle_connection(websocket, path):
     """Handle new WebSocket connection."""
@@ -85,8 +97,9 @@ async def handle_connection(websocket, path):
         print("[WEBSOCKETS] Client disconnected, remaining clients:", len(active_clients))
 
 def run_websocket_server():
-    """Run WebSocket server in a separate thread."""
+    """Start the WebSocket server on port 8765."""
     print("[SERVER] Starting WebSocket server on ws://0.0.0.0:8765")
+    global loop
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     start_server = websockets.serve(handle_connection, "0.0.0.0", 8765)
@@ -96,10 +109,13 @@ def run_websocket_server():
 
 if __name__ == "__main__":
     print("[SERVER] Starting Flask and WebSocket servers")
-    # Start WebSocket server in a new thread
+
+    # Start WebSocket server in a separate thread
     ws_thread = threading.Thread(target=run_websocket_server, daemon=True)
     ws_thread.start()
 
     # Start Flask server
     print("[FLASK] Running Flask server on http://0.0.0.0:5000")
-    app.run(host="0.0.0.0", port=5000)
+    app.run(host="0.0.0.0", port=5000, threaded=True)  # Allow multi-threading
+
+
