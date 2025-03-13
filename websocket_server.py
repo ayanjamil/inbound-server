@@ -63,5 +63,3 @@ async def handle_connection(websocket, path):
         print("Connection closed")
     finally:
         active_clients.remove(websocket)
-
-# Start Flask server for Exotel (port 
