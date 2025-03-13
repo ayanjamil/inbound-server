@@ -1,4 +1,6 @@
 flask
+flask_socketio
 requests
-websockets
-asyncio
+gevent
+gevent-websocket
+dotenv
