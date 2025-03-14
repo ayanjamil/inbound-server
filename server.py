@@ -1,83 +1,80 @@
-from flask import Flask, request
-from flask_socketio import SocketIO, emit
-import requests
-import json
 import os
-from dotenv import load_dotenv  # Load environment variables from .env
+import requests
+from flask import Flask, request, Response
+from dotenv import load_dotenv
 
-# Load .env file
 load_dotenv()
 
-print("ELEVENLABS_API_KEY:", os.getenv("ELEVENLABS_API_KEY"))  
-print("ELEVENLABS_AGENT_ID:", os.getenv("ELEVENLABS_AGENT_ID"))
-
 app = Flask(__name__)
-socketio = SocketIO(app, cors_allowed_origins="*", async_mode='gevent')
 
 ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY")
 ELEVENLABS_AGENT_ID = os.getenv("ELEVENLABS_AGENT_ID")
+EXOTEL_SID = os.getenv("EXOTEL_SID")
+EXOTEL_API_KEY = os.getenv("EXOTEL_API_KEY")
+EXOTEL_API_TOKEN = os.getenv("EXOTEL_API_TOKEN")
 
-if not ELEVENLABS_API_KEY or not ELEVENLABS_AGENT_ID:
-    raise ValueError("Missing ELEVENLABS_API_KEY or ELEVENLABS_AGENT_ID")
+@app.route("/exotel-webhook", methods=["POST", "GET"])
+def webhook():
+    call_data = request.form.to_dict()
+    from_number = request.form.get("From")
+    call_sid = request.form.get("CallSid")
+    recording_url = request.form.get("RecordingUrl")
 
-def get_signed_url():
-    response = requests.get(
-        f"https://api.elevenlabs.io/v1/convai/conversation/get_signed_url?agent_id={ELEVENLABS_AGENT_ID}",
-        headers={'xi-api-key': ELEVENLABS_API_KEY}
-    )
-    response.raise_for_status()
-    return response.json()['signed_url']
+    print(f"Received call from: {from_number}, Call SID: {call_sid}, Recording URL: {recording_url}")
 
-@app.route("/incoming-call-eleven", methods=['GET', 'POST'])
-def handle_incoming_call():
-    twiml_response = f'''<?xml version="1.0" encoding="UTF-8"?>
-        <Response>
-            <Connect>
-                <Stream url="wss://{request.host}/media-stream" />
-            </Connect>
-        </Response>'''
-    return twiml_response, 200, {'Content-Type': 'text/xml'}
+    if not recording_url:
+        return Response("Missing recording URL", status=400)
 
-@socketio.on('connect', namespace='/media-stream')
-def handle_ws_connect():
-    print("[WebSocket] Connected to Twilio Media Stream")
-    socketio.emit("message", {"event": "connected"})
+    # Send to ElevenLabs Conversational AI
+    ai_response_url = get_ai_response(recording_url)
 
-elevenLabsWs = None
+    if not ai_response_url:
+        return Response("Failed to generate AI response", status=500)
 
-@socketio.on("message")
-def handle_ws_message(data):
-    global elevenLabsWs
-    try:
-        message = json.loads(data)
-        if message.get("event") == "start":
-            stream_sid = message["start"]["streamSid"]
-            print(f"[Twilio] Stream started with ID: {stream_sid}")
-            socketio.emit("message", {"event": "ack", "streamSid": stream_sid})
-            
-            # Connect to ElevenLabs WebSocket
-            signed_url = get_signed_url()
-            elevenLabsWs = socketio.connect(signed_url)
+    # Send AI response back to Exotel
+    play_audio(call_sid, ai_response_url)
 
-        elif message.get("event") == "media":
-            if elevenLabsWs and elevenLabsWs.connected:
-                audio_message = {
-                    "user_audio_chunk": message["media"]["payload"]
-                }
-                elevenLabsWs.send(json.dumps(audio_message))
+    return Response("AI response sent to Exotel", status=200)
 
-        elif message.get("event") == "stop":
-            if elevenLabsWs:
-                elevenLabsWs.disconnect()
-            print("[WebSocket] Stream ended.")
+def get_ai_response(audio_url):
+    """Send recorded audio to ElevenLabs AI agent and get response"""
+    api_url = f"https://api.elevenlabs.io/v1/convai/conversation/get_signed_url?agent_id={ELEVENLABS_AGENT_ID}"
+    headers = {
+        "Authorization": f"Bearer {ELEVENLABS_API_KEY}",
+        "Content-Type": "application/json"
+    }
+    payload = {
+        "audio_url": audio_url
+    }
+
+    response = requests.post(api_url, json=payload, headers=headers)
+    if response.status_code != 200:
+        print("ElevenLabs API error:", response.text)
+        return None
+
+    response_data = response.json()
+    return response_data.get("audio_url")
+
+def play_audio(call_sid, audio_url):
+    """Use Exotel API to play AI-generated response to the caller."""
+    exotel_api_url = f"https://{EXOTEL_SID}:{EXOTEL_API_TOKEN}@api.exotel.com/v1/Accounts/{EXOTEL_SID}/Calls/connect"
+
+    payload = {
+        "From": "YourExotelNumber",
+        "To": call_sid,  # This should be the same call SID received from Exotel
+        "CallerId": "YourExotelCallerId",
+        "Url": audio_url
+    }
     
-    except Exception as e:
-        print(f"[Error] {str(e)}")
-
-@socketio.on("disconnect")
-def handle_ws_disconnect():
-    print("[WebSocket] Disconnected from Twilio")
+    auth = (EXOTEL_API_KEY, EXOTEL_API_TOKEN)
+    
+    response = requests.post(exotel_api_url, data=payload, auth=auth)
+    
+    if response.status_code == 200:
+        print("Audio response played successfully!")
+    else:
+        print("Error playing AI response:", response.text)
 
 if __name__ == "__main__":
-    print("[SERVER] Starting Flask and WebSocket servers")
-    socketio.run(app, host="0.0.0.0", port=5000)
+    port = int(os.getenv("PORT", 5000))
+    app.run(host="0.0.0.0", port=port)
