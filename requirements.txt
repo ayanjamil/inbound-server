@@ -4,3 +4,5 @@ requests
 gevent
 gevent-websocket
 dotenv
+eventlet
+websocket-client
